@@ -3,7 +3,7 @@ import time
 import subprocess
 import sys
 from mininet.log import setLogLevel, info
-
+from defense.firewall_rules import *
 
 def run_in_host(host, cmd):
     return host.cmd(cmd).strip()
@@ -31,7 +31,7 @@ def start_server(victim):
 def run_attack(attacker, target_ip):
     info("*** Launching SYN Flood attack…\n")
     cmd = (
-        f"python3 attack/syn_flood.py "
+        f"python3 syn_flood.py "
         f"-t {target_ip} -p 8080 -c 20000 "
     )
     output = attacker.cmd(cmd)
@@ -46,42 +46,68 @@ def lower_defenses(victim):
     victim.cmd("sysctl -w net.ipv4.tcp_timestamps=0")
 
 def main():
-    setLogLevel('info')
+    setLogLevel("info")
 
-    info("*** Creating network\n")
     net = create_topology()
     net.start()
 
     attacker = net.get("attacker")
-    victim = net.get("victim")
-    client = net.get("client")
+    victim   = net.get("victim")
+    client   = net.get("client")
+    target_ip = "10.0.0.2"
 
-    info("*** Testing connectivity\n")
-    net.pingAll()
+    # ============================
+    # SETUP
+    # ============================
+    clear_defenses(victim)
     lower_defenses(victim)
-    # Start webserver
     start_server(victim)
 
-    # Client loading victim page normally
-    info("*** Client fetching victim page before attack...\n")
-    print(client.cmd("curl -s http://10.0.0.2:8080"))
+    # ============================
+    # PHASE 1 — NO DEFENSES
+    # ============================
+    print("\n========== PHASE 1: DEFENSES OFF ==========")
 
-    before = syn_count(victim)
-    print(f"\n*** Before attack: SYN_RECV count = {before}")
+    before1 = syn_count(victim)
+    print(f"[NO DEFENSES] SYN_RECV before attack: {before1}")
 
-    # Run SYN Flood
-    run_attack(attacker, "10.0.0.2")
+    run_attack(attacker, target_ip)
 
-    after = syn_count(victim)
-    print(f"\n*** After attack: SYN_RECV count = {after}")
+    after1 = syn_count(victim)
+    print(f"[NO DEFENSES] SYN_RECV after attack: {after1}")
 
-    # Try fetching the page again
-    info("*** Client attempting to fetch page after attack...\n")
-    print(client.cmd("curl -s --max-time 2 http://10.0.0.2:8080"))
+    print("[NO DEFENSES] Client test:")
+    print(client.cmd(f"curl -s --max-time 2 http://{target_ip}:8080"))
 
-    info("*** Stopping network\n")
+    # ============================
+    # APPLY DEFENSES
+    # ============================
+    apply_defenses(victim, logging=False)
+
+    # ============================
+    # PHASE 2 — DEFENSES ON
+    # ============================
+    print("\n========== PHASE 2: DEFENSES ON ==========")
+
+    before2 = syn_count(victim)
+    print(f"[DEFENSES ON] SYN_RECV before attack: {before2}")
+
+    run_attack(attacker, target_ip)
+
+    after2 = syn_count(victim)
+    print(f"[DEFENSES ON] SYN_RECV after attack: {after2}")
+
+    print("[DEFENSES ON] Client test:")
+    print(client.cmd(f"curl -s --max-time 2 http://{target_ip}:8080"))
+
+    # ============================
+    # RESULTS
+    # ============================
+    print("\n========== COMPARISON ==========")
+    print(f"No defenses SYN_RECV: {after1}")
+    print(f"With defenses SYN_RECV: {after2}")
+
     net.stop()
-
 
 if __name__ == "__main__":
     main()
